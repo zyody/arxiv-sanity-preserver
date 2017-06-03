@@ -48,7 +48,7 @@ if __name__ == "__main__":
   # parse input arguments
   parser = argparse.ArgumentParser()
   parser.add_argument('--search-query', type=str,
-                      default='cat:cs.CV+OR+cat:cs.AI+OR+cat:cs.LG+OR+cat:cs.CL+OR+cat:cs.NE+OR+cat:stat.ML',
+                      default='stat.AP+OR+cat:stat.CO+OR+cat:stat.ML+OR+cat:stat.ME+OR+cat:stat.TH+OR+cat:q-bio.BM+OR+cat:q-bio.CB+OR+cat:q-bio.GN+OR+cat:q-bio.MN+OR+cat:q-bio.NC+OR+cat:q-bio.OT+OR+cat:q-bio.PE+OR+cat:q-bio.QM+OR+cat:q-bio.SC+OR+cat:q-bio.TO+OR+cat:cs.AR+OR+cat:cs.AI+OR+cat:cs.CL+OR+cat:cs.CC+OR+cat:cs.CE+OR+cat:cs.CG+OR+cat:cs.GT+OR+cat:cs.CV+OR+cat:cs.CY+OR+cat:cs.CR+OR+cat:cs.DS+OR+cat:cs.DB+OR+cat:cs.DL+OR+cat:cs.DM+OR+cat:cs.DC+OR+cat:cs.GL+OR+cat:cs.GR+OR+cat:cs.HC+OR+cat:cs.IR+OR+cat:cs.IT+OR+cat:cs.LG+OR+cat:cs.LO+OR+cat:cs.MS+OR+cat:cs.MA+OR+cat:cs.MM+OR+cat:cs.NI+OR+cat:cs.NE+OR+cat:cs.NA+OR+cat:cs.OS+OR+cat:cs.OH+OR+cat:cs.PF+OR+cat:cs.PL+OR+cat:cs.RO+OR+cat:cs.SE+OR+cat:cs.SD+OR+cat:cs.SC+OR+cat:nlin.AO+OR+cat:nlin.CG+OR+cat:nlin.CD+OR+cat:nlin.SI+OR+cat:nlin.PS+OR+cat:math.AG+OR+cat:math.AT+OR+cat:math.AP+OR+cat:math.CT+OR+cat:math.CA+OR+cat:math.CO+OR+cat:math.AC+OR+cat:math.CV+OR+cat:math.DG+OR+cat:math.DS+OR+cat:math.FA+OR+cat:math.GM+OR+cat:math.GN+OR+cat:math.GT+OR+cat:math.GR+OR+cat:math.HO+OR+cat:math.IT+OR+cat:math.KT+OR+cat:math.LO+OR+cat:math.MP+OR+cat:math.MG+OR+cat:math.NT+OR+cat:math.NA+OR+cat:math.OA+OR+cat:math.OC+OR+cat:math.PR+OR+cat:math.QA+OR+cat:math.RT+OR+cat:math.RA+OR+cat:math.SP+OR+cat:math.ST+OR+cat:math.SG',
                       help='query used for arxiv API. See http://arxiv.org/help/api/user-manual#detailed_examples')
   parser.add_argument('--start-index', type=int, default=0, help='0 = most recent API result')
   parser.add_argument('--max-index', type=int, default=10000, help='upper bound on paper index we will fetch')
@@ -74,7 +74,9 @@ if __name__ == "__main__":
   # main loop where we fetch the new results
   print('database has %d entries at start' % (len(db), ))
   num_added_total = 0
-  for i in range(args.start_index, args.max_index, args.results_per_iteration):
+  i = args.start_index
+  fail_num = 0
+  while i <= args.max_index:
 
     print("Results %i - %i" % (i,i+args.results_per_iteration))
     query = 'search_query=%s&sortBy=lastUpdatedDate&start=%i&max_results=%i' % (args.search_query,
@@ -106,9 +108,17 @@ if __name__ == "__main__":
     print('Added %d papers, already had %d.' % (num_added, num_skipped))
 
     if len(parse.entries) == 0:
-      print('Received no results from arxiv. Rate limiting? Exiting. Restart later maybe.')
-      print(response)
-      break
+      fail_num += 1
+      print('fail num:')
+      print(fail_num)
+      if fail_num > 500:
+        print('Received no results from arxiv. Rate limiting? Exiting. Restart later maybe.')
+        print(response)
+        break
+      print('Sleeping for %i seconds' % (args.wait_time + fail_num, ))
+      time.sleep(args.wait_time + fail_num + random.uniform(0, 6))
+      continue
+    fail_num = 0
 
     if num_added == 0 and args.break_on_no_added == 1:
       print('No new papers were added. Assuming no new papers exist. Exiting.')
@@ -116,6 +126,7 @@ if __name__ == "__main__":
 
     print('Sleeping for %i seconds' % (args.wait_time , ))
     time.sleep(args.wait_time + random.uniform(0, 3))
+    i += args.results_per_iteration
 
   # save the database before we quit, if we found anything new
   if num_added_total > 0:

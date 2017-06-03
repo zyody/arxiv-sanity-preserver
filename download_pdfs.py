@@ -24,21 +24,32 @@ for pid,j in db.items():
 
   # try retrieve the pdf
   numtot += 1
-  try:
-    if not basename in have:
-      print('fetching %s into %s' % (pdf_url, fname))
-      req = urlopen(pdf_url, None, timeout_secs)
-      with open(fname, 'wb') as fp:
+  fail_num = 0
+  while True:
+    try:
+      if not basename in have:
+        print('fetching %s into %s' % (pdf_url, fname))
+        req = urlopen(pdf_url, None, timeout_secs)
+        with open(fname, 'wb') as fp:
           shutil.copyfileobj(req, fp)
-      time.sleep(0.05 + random.uniform(0,0.1))
-    else:
-      print('%s exists, skipping' % (fname, ))
-    numok+=1
-  except Exception as e:
-    print('error downloading: ', pdf_url)
-    print(e)
+        time.sleep(0.05 + random.uniform(0,0.1))
+      else:
+        print('%s exists, skipping' % (fname, ))
+      numok+=1
+      break
+    except Exception as e:
+      fail_num += 1
+      print('error downloading: ', pdf_url)
+      print(e)
+      print('Sleeping for %i seconds' % (fail_num, ))
+      time.sleep(fail_num + random.uniform(0, 1))
+      if fail_num > 60:
+        break
+
   
   print('%d/%d of %d downloaded ok.' % (numok, numtot, len(db)))
+#  print('Sleeping for %i seconds' % (3, ))
+#  time.sleep(3 + random.uniform(0, 6))
   
 print('final number of papers downloaded okay: %d/%d' % (numok, len(db)))
 
