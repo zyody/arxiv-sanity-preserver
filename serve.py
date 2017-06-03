@@ -4,7 +4,7 @@ import time
 import pickle
 import argparse
 import dateutil.parser
-from random import shuffle, randrange
+from random import shuffle, randrange, random
 
 import numpy as np
 from sqlite3 import dbapi2 as sqlite3
@@ -151,6 +151,323 @@ def papers_from_svm(recent_days=None):
       curtime = int(time.time()) # in seconds
       out = [x for x in out if curtime - x['time_published'] < recent_days*24*60*60]
 
+  return out
+
+def papers_from_cf(recent_days=None):
+  time_tradeoff = 0.0001#if don not consider time, set it to 0
+  num_recommendations = 1000 # papers to recommend per user
+  out = []#save the paper list to show
+  if g.user:
+    uid = session['user_id']
+    db = pickle.load(open(Config.db_serve_path, 'rb'))#contain paper information to appear
+    paper_score = scores_from_cf(uid)
+    for pid in paper_score.keys():
+      paper_score[pid] += time_tradeoff*db[pid]['tscore'] 
+    sorted_paper_score = [(k, paper_score[k]) for k in sorted(paper_score, key=paper_score.get, reverse=True)]
+    for (pid,score) in sorted_paper_score:
+      out.append(db[pid])
+      if len(out) == num_recommendations:
+        break
+
+    if recent_days is not None:
+      # filter as well to only most recent papers
+      curtime = int(time.time()) # in seconds
+      out = [x for x in out if curtime - x['time_published'] < recent_days*24*60*60]
+
+  return out
+
+def scores_from_cf(uid):
+  num_nn = 300
+  paper_score = {}
+  tfidf = pickle.load(open(Config.tfidf_path, 'rb'))
+  X = tfidf['X']
+  X = X.todense()#row paper index, column tfidf features
+  Y = np.asarray(X)
+
+  meta = pickle.load(open(Config.meta_path, 'rb'))
+  pids = meta['pids']
+  xtoi = { strip_version(x):i for x,i in meta['ptoi'].items() }
+
+  uid_pids = {}#record user and a list of papers he read
+
+  users = query_db('''select distinct(user_id) from library''')
+  user_ids = {str(x['user_id']) for x in users}
+
+  library_now = query_db('''select * from library where user_id = ?''', [uid])
+  pids_now = {x['paper_id'] for x in library_now}#papers that the current user saves
+
+  user_sim = {}
+  for user_id in user_ids:
+    if user_id == uid:#if is the current user, skip
+        continue
+    user_library = query_db('''select * from library where user_id = ?''', [user_id])
+    pids = {x['paper_id'] for x in user_library}#papers that a certain user saves
+    uid_pids[user_id] = pids#find paper list
+    tmp = {x for x in pids if x in pids_now}
+    user_sim[user_id] = len(tmp)/(len(pids)**0.5 * len(pids_now)**0.5)#calculate the similarity between user_id and current user
+
+  sorted_user_sim = [(k, user_sim[k]) for k in sorted(user_sim, key=user_sim.get, reverse=True)]#sort user_ids from the closest to the farthest
+
+  ite = 0
+  paper_score = {}
+  for user_id,sim_score in sorted_user_sim:
+    if sim_score == 0:#all the following sim_score is zero
+      break
+    for pid in uid_pids[user_id]:
+      if pid in pids_now:
+        continue
+      if pid not in paper_score:
+        paper_score[pid] = 0
+      paper_score[pid] += sim_score
+    ite += 1
+    if ite == num_nn:#only consider num_nn users to save time
+      break
+
+  return paper_score
+
+def papers_from_sim_term(recent_days=None):
+  time_tradeoff = 1#if do not consider time, set it to 0
+  num_recommendations = 1000 # papers to recommend per user
+  out = []#merge several paper lists to one paper list
+  if g.user:
+    uid = session['user_id']
+    db = pickle.load(open(Config.db_serve_path, 'rb'))#contain paper information to appear
+
+    tfidf = pickle.load(open(Config.tfidf_path, 'rb'))
+    X = tfidf['X']
+    X = X.todense()#row paper index, column tfidf features
+    Y = np.asarray(X)
+    num_to_show = min(num_recommendations,X.shape[0]);
+
+    meta = pickle.load(open(Config.meta_path, 'rb'))
+    pids = meta['pids']
+    xtoi = { strip_version(x):i for x,i in meta['ptoi'].items() }
+
+    term_user_vec = {}#each user has several vectors, each vector corresponds to a term
+    user_library = query_db('''select * from library where user_id = ?''', [uid])
+    if len(user_library) == 0:
+      return []
+    libids = {x['paper_id'] for x in user_library}#papers that a certain user saves
+
+    libids_map = {}#organize libids by terms
+    for libid in libids:
+      for tag in db[libid]['tags']:
+        term = tag['term']
+        if term not in libids_map:
+          libids_map[term] = []
+        libids_map[term].append(libid)
+
+    out_map = {}#for each term vector, generate a paper list.
+    for term,term_ids in libids_map.items():
+      if term not in term_user_vec:
+        term_user_vec[term] = np.array([0.0]*X.shape[1])
+      posix = [xtoi[p] for p in term_ids if p in xtoi]  
+      for ix in posix:
+        term_user_vec[term] += Y[ix,:]
+
+      term_user_vec[term] = term_user_vec[term]/len(posix)#generate each term vector
+
+      ds = -np.asarray(np.dot(X, term_user_vec[term].T)) #NxD * Dx1 => Nx1
+      IX = np.argsort(ds, axis = 1) # Nx1, but it transfers to 1xN
+      plist = [pids[q] for q in list(IX[0,:num_to_show])]
+
+      out_map[term] = [db[strip_version(x)] for x in plist if not strip_version(x) in libids]#generate a paper list for each term
+
+    sum_term_ids = 0#the sum of ids
+    for term,term_ids in libids_map.items():
+      for term_id in term_ids: 
+        sum_term_ids += db[term_id]['tscore']**time_tradeoff#is a weight sum, the weight corresponds to the time
+
+    term_rate = {}#assign rate to each term based on the number of ids
+    i1 = 0
+    remain = 1
+    for term,term_ids in libids_map.items():
+      if i1 == len(libids_map) - 1:
+        term_rate[term] = remain
+      else:
+        tmp = 0
+        for term_id in term_ids:
+          tmp += db[term_id]['tscore']**time_tradeoff#weigh sum
+        term_rate[term] = tmp/sum_term_ids
+        remain -= term_rate[term]
+      i1 += 1
+
+    term_index = {}
+    for term in libids_map.keys():#record the index for each term's paper list
+      term_index[term] = 0
+    for i in range(X.shape[0] - len(libids)):
+      if i >= num_recommendations:
+        break
+      tmp = random()
+      p_accu = 0
+      final_term = ''#an empty term, will be replaced
+      for term in libids_map.keys():#sample a term from the term probability distribution
+        p_accu += term_rate[term]
+        if tmp <= p_accu:
+          final_term = term
+          break
+      index = term_index[final_term]
+      if index >= len(out_map[final_term]):
+        continue
+      next_paper = out_map[final_term][index]
+      if next_paper not in out:#If not exist, add the paper to out and update the index. Otherwise, resample.
+        out.append(next_paper)
+        term_index[final_term] = index + 1
+      else:
+        term_index[final_term] = index + 1
+  
+    if recent_days is not None:
+      # filter as well to only most recent papers
+      curtime = int(time.time()) # in seconds
+      out = [x for x in out if curtime - x['time_published'] < recent_days*24*60*60]
+
+  return out
+
+def papers_from_integration(recent_days=None):
+  time_tradeoff_usermodel = 1#if do not consider time, set it to 0
+  time_tradeoff_papersort = 0.2#if do not consider time, set it to 0
+  cf_tradeoff = 1
+  num_recommendations = 1000 # papers to recommend per user
+  out = []#merge several paper lists to one paper list
+  if g.user:
+    uid = session['user_id']
+    db = pickle.load(open(Config.db_serve_path, 'rb'))#contain paper information to appear
+
+    tfidf = pickle.load(open(Config.tfidf_path, 'rb'))
+    X = tfidf['X']
+    X = X.todense()#row paper index, column tfidf features
+    Y = np.asarray(X)
+    num_to_show = min(num_recommendations,X.shape[0]);
+
+    meta = pickle.load(open(Config.meta_path, 'rb'))
+    pids = meta['pids']
+    xtoi = { strip_version(x):i for x,i in meta['ptoi'].items() }
+
+    term_user_vec = {}#each user has several vectors, each vector corresponds to a term
+    user_library = query_db('''select * from library where user_id = ?''', [uid])
+    if len(user_library) == 0:
+      return []
+    libids = {x['paper_id'] for x in user_library}#papers that a certain user saves
+
+    libids_map = {}#organize libids by terms
+    for libid in libids:
+      for tag in db[libid]['tags']:
+        term = tag['term']
+        if term not in libids_map:
+          libids_map[term] = []
+        libids_map[term].append(libid)
+
+    out_map = {}#for each term vector, generate a paper list.
+    for term,term_ids in libids_map.items():
+      if term not in term_user_vec:
+        term_user_vec[term] = np.array([0.0]*X.shape[1])
+      posix = [xtoi[p] for p in term_ids if p in xtoi]  
+      for ix in posix:
+        term_user_vec[term] += Y[ix,:]
+
+      term_user_vec[term] = term_user_vec[term]/len(posix)#generate each term vector
+
+      ds = -np.asarray(np.dot(X, term_user_vec[term].T)) #NxD * Dx1 => Nx1
+      paper_score = scores_from_cf(uid)
+      for i in range(np.size(ds)):
+        pid = strip_version(pids[i])
+        ds[0,i] -= time_tradeoff_papersort*db[pid]['tscore']
+        if pid in paper_score:
+          ds[0,i] -= cf_tradeoff*paper_score[pid]
+      IX = np.argsort(ds, axis = 1) # Nx1, but it transfers to 1xN
+      plist = [pids[q] for q in list(IX[0,:num_to_show])]
+
+      out_map[term] = [db[strip_version(x)] for x in plist if not strip_version(x) in libids]#generate a paper list for each term
+
+    sum_term_ids = 0#the sum of ids
+    for term,term_ids in libids_map.items():
+      for term_id in term_ids: 
+        sum_term_ids += db[term_id]['tscore']**time_tradeoff_usermodel#is a weight sum, the weight corresponds to the time
+
+    term_rate = {}#assign rate to each term based on the number of ids
+    i1 = 0
+    remain = 1
+    for term,term_ids in libids_map.items():
+      if i1 == len(libids_map) - 1:
+        term_rate[term] = remain
+      else:
+        tmp = 0
+        for term_id in term_ids:
+          tmp += db[term_id]['tscore']**time_tradeoff_usermodel#weigh sum
+        term_rate[term] = tmp/sum_term_ids
+        remain -= term_rate[term]
+      i1 += 1
+
+    term_index = {}
+    for term in libids_map.keys():#record the index for each term's paper list
+      term_index[term] = 0
+    for i in range(X.shape[0] - len(libids)):
+      if i >= num_recommendations:
+        break
+      tmp = random()
+      p_accu = 0
+      final_term = ''#an empty term, will be replaced
+      for term in libids_map.keys():#sample a term from the term probability distribution
+        p_accu += term_rate[term]
+        if tmp <= p_accu:
+          final_term = term
+          break
+      index = term_index[final_term]
+      if index >= len(out_map[final_term]):
+        continue
+      next_paper = out_map[final_term][index]
+      if next_paper not in out:#If not exist, add the paper to out and update the index. Otherwise, resample.
+        out.append(next_paper)
+        term_index[final_term] = index + 1
+      else:
+        term_index[final_term] = index + 1
+  
+    if recent_days is not None:
+      # filter as well to only most recent papers
+      curtime = int(time.time()) # in seconds
+      out = [x for x in out if curtime - x['time_published'] < recent_days*24*60*60]
+
+  return out
+
+def papers_from_sim(recent_days=None):
+  num_recommendations = 1000 # papers to recommend per user
+  out = []
+  if g.user:
+    uid = session['user_id']
+    tfidf = pickle.load(open(Config.tfidf_path, 'rb'))
+    X = tfidf['X']
+    X = X.todense()
+    Y = np.asarray(X)
+
+    #print(X)
+    meta = pickle.load(open(Config.meta_path, 'rb'))
+    pids = meta['pids']
+
+    user_vec = np.array([0.0]*X.shape[1])
+    user_library = query_db('''select * from library where user_id = ?''', [uid])
+    if len(user_library) == 0:
+        return []
+    libids = {x['paper_id'] for x in user_library}
+
+    meta = pickle.load(open('tfidf_meta.p','rb'))
+    xtoi = { strip_version(x):i for x,i in meta['ptoi'].items() }
+    posix = [xtoi[p] for p in libids if p in xtoi]
+  
+    for ix in posix:
+      user_vec += Y[ix,:]
+
+    user_vec = user_vec/len(posix)
+
+    ds = -np.asarray(np.dot(X, user_vec.T)) #NxD * Dx1 => Nx1
+    IX = np.argsort(ds, axis = 1) # Nx1, but it transfers to 1xN 
+    plist = [pids[q] for q in list(IX[0,:min(num_recommendations,X.shape[0])])]
+
+    out = [db[strip_version(x)] for x in plist if not strip_version(x) in libids]
+
+    if recent_days is not None:
+      # filter as well to only most recent papers
+      curtime = int(time.time()) # in seconds
+      out = [x for x in out if curtime - x['time_published'] < recent_days*24*60*60]
   return out
 
 def papers_filter_version(papers, v):
@@ -348,17 +665,69 @@ def search():
   ctx = default_context(papers, render_format="search")
   return render_template('main.html', **ctx)
 
-@app.route('/recommend', methods=['GET'])
-def recommend():
+@app.route('/recommend_svm', methods=['GET'])
+def recommend_svm():
   """ return user's svm sorted list """
-  ttstr = request.args.get('timefilter', 'week') # default is week
+  ttstr = request.args.get('timefilter', 'alltime') # default is alltime
   vstr = request.args.get('vfilter', 'all') # default is all (no filter)
   legend = {'day':1, '3days':3, 'week':7, 'month':30, 'year':365}
   tt = legend.get(ttstr, None)
   papers = papers_from_svm(recent_days=tt)
   papers = papers_filter_version(papers, vstr)
-  ctx = default_context(papers, render_format='recommend',
+  ctx = default_context(papers, render_format='recommend_svm',
                         msg='Recommended papers: (based on SVM trained on tfidf of papers in your library, refreshed every day or so)' if g.user else 'You must be logged in and have some papers saved in your library.')
+  return render_template('main.html', **ctx)
+
+@app.route('/recommend_sim', methods=['GET'])
+def recommend_sim():
+  """ return user's paper list based on tfidf similarity"""
+  ttstr = request.args.get('timefilter', 'alltime') # default is alltime
+  vstr = request.args.get('vfilter', 'all') # default is all (no filter)
+  legend = {'day':1, '3days':3, 'week':7, 'month':30, 'year':365}
+  tt = legend.get(ttstr, None)
+  papers = papers_from_sim(recent_days=tt)
+  papers = papers_filter_version(papers, vstr)
+  ctx = default_context(papers, render_format='recommend_sim',
+                        msg='Recommended papers: (based on tfidf similarity of papers in your library)' if g.user else 'You must be logged in and have some papers saved in your library.')
+  return render_template('main.html', **ctx)
+
+@app.route('/recommend_sim_diverse', methods=['GET'])
+def recommend_sim_diverse():
+  """ return user's paper list based on tfidf similarity, also considers diversity """
+  ttstr = request.args.get('timefilter', 'alltime') # default is alltime
+  vstr = request.args.get('vfilter', 'all') # default is all (no filter)
+  legend = {'day':1, '3days':3, 'week':7, 'month':30, 'year':365}
+  tt = legend.get(ttstr, None)
+  papers = papers_from_sim_term(recent_days=tt)
+  papers = papers_filter_version(papers, vstr)
+  ctx = default_context(papers, render_format='recommend_sim_diverse',
+                        msg='Recommended papers: (based on tfidf similarity of papers in your library, also considers diversity)' if g.user else 'You must be logged in and have some papers saved in your library.')
+  return render_template('main.html', **ctx)
+
+@app.route('/recommend_cf', methods=['GET'])
+def recommend_cf():
+  """ return user's paper list based on collaborative filtering """
+  ttstr = request.args.get('timefilter', 'alltime') # default is alltime
+  vstr = request.args.get('vfilter', 'all') # default is all (no filter)
+  legend = {'day':1, '3days':3, 'week':7, 'month':30, 'year':365}
+  tt = legend.get(ttstr, None)
+  papers = papers_from_cf(recent_days=tt)
+  papers = papers_filter_version(papers, vstr)
+  ctx = default_context(papers, render_format='recommend_cf',
+                        msg='Recommended papers: (based on collaborative filtering)' if g.user else 'You must be logged in and have some papers saved in your library.')
+  return render_template('main.html', **ctx)
+
+@app.route('/recommend_integration', methods=['GET'])
+def recommend_integration():
+  """ return user's paper list based on tfidf similarity, diversity and collaborative filtering """
+  ttstr = request.args.get('timefilter', 'alltime') # default is alltime
+  vstr = request.args.get('vfilter', 'all') # default is all (no filter)
+  legend = {'day':1, '3days':3, 'week':7, 'month':30, 'year':365}
+  tt = legend.get(ttstr, None)
+  papers = papers_from_integration(recent_days=tt)
+  papers = papers_filter_version(papers, vstr)
+  ctx = default_context(papers, render_format='recommend_integration',
+                        msg='Recommended papers: (based on tfidf similarity of papers in your library, diversity and collaborative filtering)' if g.user else 'You must be logged in and have some papers saved in your library.')
   return render_template('main.html', **ctx)
 
 @app.route('/top', methods=['GET'])
@@ -488,7 +857,7 @@ def logout():
 # int main
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
-   
+  
   parser = argparse.ArgumentParser()
   parser.add_argument('-p', '--prod', dest='prod', action='store_true', help='run in prod?')
   parser.add_argument('-r', '--num_results', dest='num_results', type=int, default=200, help='number of results to return per query')
