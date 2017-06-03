@@ -23,6 +23,7 @@ class Config(object):
     db_serve_path = 'db2.p' # an enriched db.p with various preprocessing info
     database_path = 'as.db'
     serve_cache_path = 'serve_cache.p'
+    user_vec_path = 'user_vec.p'
     
     banned_path = 'banned.txt' # for twitter users who are banned
     tmp_dir = 'tmp'
