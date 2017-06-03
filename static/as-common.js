@@ -172,9 +172,9 @@ function addPapers(num, dynamic) {
 
     div.append('div').attr('style', 'clear:both');
 
-    if(typeof p.img !== 'undefined') {
-      div.append('div').classed('animg', true).append('img').attr('src', p.img);
-    }
+    //if(typeof p.img !== 'undefined') {
+    //  div.append('div').classed('animg', true).append('img').attr('src', p.img);
+    //}
 
     if(typeof p.abstract !== 'undefined') {
       var abdiv = div.append('span').classed('tt', true).html(p.abstract);
