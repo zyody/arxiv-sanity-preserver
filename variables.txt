@@ -1,0 +1,35 @@
+db(db_path):
+key是rawid,
+value也是一个dict，key可以为'_rawid''_version''id'还有很多从json文件获得的属性，比如'title''updated',可查看： http://export.arxiv.org/api/query?search_query=cat:cs.CV+OR+cat:cs.AI+OR+cat:cs.LG+OR+cat:cs.CL+OR+cat:cs.NE+OR+cat:stat.ML&sortBy=lastUpdatedDate&start=5&max_results=100。
+
+tfidf_path:
+key是'X',
+value是X，X是一个矩阵，行是sample，列是tfidf特征。
+
+meta_path:
+key             value
+'vocab'         词典
+'idf'           每个词的idf
+'pids'          pid的list
+'ptoi'          dict pid->i
+
+sim_path:
+key是pid
+value是pid的list，长度为50, 50 nearest neighbor.
+
+user_sim_path:
+key是uid
+value是pid的list，和uid相关度从高到低。
+
+database_path（sqlite）:
+user:注册的用户，字段有username,user_id
+library：用户添加到library里的论文,字段有user_id(可以很多行相同的user_id),paper_id
+
+db_serve_path:
+同db_path
+
+serve_cache_path:
+key               value
+search_dict       dict,key是word，value是（标题，作者，summarytags等的）idf
+date_sorted_pids  pid的list，按时间排序
+top_sorted_pids   pid的list，按收藏次数排序
