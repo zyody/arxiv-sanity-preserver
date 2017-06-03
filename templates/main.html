@@ -25,6 +25,7 @@
 <script src="{{ url_for('static', filename='as-common.js') }}"></script>
 
 <!-- Google Analytics JS -->
+<!--
 <script>
   (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
   (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
@@ -35,7 +36,7 @@
   ga('send', 'pageview');
 
 </script>
-
+-->
 <script>
 
 // passed in from flask as json
@@ -83,11 +84,15 @@ $(document).ready(function(){
 	}
 
   var vf = QueryString.vfilter; if(typeof vf === 'undefined') { vf = 'all'; }
-  var tf = QueryString.timefilter; if(typeof tf === 'undefined') { tf = 'week'; }
+  var tf = QueryString.timefilter; if(typeof tf === 'undefined') { tf = 'alltime'; }
   var link_endpoint = '/';
   if(render_format === 'recent') { link_endpoint = ''; }
   if(render_format === 'top') { link_endpoint = 'top'; }
-  if(render_format === 'recommend') { link_endpoint = 'recommend'; }
+  if(render_format === 'recommend_svm') { link_endpoint = 'recommend_svm'; }
+  if(render_format === 'recommend_sim') { link_endpoint = 'recommend_sim'; }
+  if(render_format === 'recommend_sim_diverse') { link_endpoint = 'recommend_sim_diverse'; }
+  if(render_format === 'recommend_cf') { link_endpoint = 'recommend_cf'; }
+  if(render_format === 'recommend_integration') { link_endpoint = 'recommend_integration'; }
   if(render_format === 'toptwtr') { link_endpoint = 'toptwtr'; }
   if(render_format === 'discussions') { link_endpoint = 'discussions'; }
 
@@ -96,7 +101,7 @@ $(document).ready(function(){
   var time_range = tf;
 
   // set up time filtering options
-  if(render_format === 'recommend' || render_format === 'top' || render_format === 'recent') {
+  if(render_format === 'recommend_svm' || render_format === 'recommend_sim' || render_format === 'recommend_sim_diverse' || render_format === 'recommend_cf' || render_format === 'recommend_integration' || render_format === 'top' || render_format === 'recent') {
     // insert version filtering options for these views
     var elt = d3.select('#recommend-time-choice');
     var vflink = vf === 'all' ? '1' : 'all'; // toggle only showing v1 or not
@@ -109,7 +114,7 @@ $(document).ready(function(){
     if(vf === '1') { delt.classed('vchoice-selected', true); }
   }
 
-  if(render_format === 'recommend' || render_format === 'top') {
+  if(render_format === 'recommend_svm' || render_format === 'recommend_sim' || render_format === 'recommend_sim_diverse' || render_format === 'recommend_cf' || render_format === 'recommend_integration' || render_format === 'top') {
     // insert time filtering options for these two views
     var elt = d3.select('#recommend-time-choice');
     elt.append('div').classed('fdivider', true).html('|');
@@ -144,7 +149,11 @@ $(document).ready(function(){
   if( render_format === 'top') { d3.select('#tabtop').classed('tab-selected', true); }
   if( render_format === 'toptwtr') { d3.select('#tabtwtr').classed('tab-selected', true); }
   if( render_format === 'discussions') { d3.select('#tabdiscussions').classed('tab-selected', true); }
-  if( render_format === 'recommend') { d3.select('#tabrec').classed('tab-selected', true); }
+  if( render_format === 'recommend_svm') { d3.select('#tabrec_svm').classed('tab-selected', true); }
+  if( render_format === 'recommend_sim') { d3.select('#tabrec_sim').classed('tab-selected', true); }
+  if( render_format === 'recommend_sim_diverse') { d3.select('#tabrec_sim_diverse').classed('tab-selected', true); }
+  if( render_format === 'recommend_cf') { d3.select('#tabrec_cf').classed('tab-selected', true); }
+  if( render_format === 'recommend_integration') { d3.select('#tabrec_integration').classed('tab-selected', true); }
   if( render_format === 'library') { d3.select('#tablib').classed('tab-selected', true); }
 });
 
@@ -210,11 +219,16 @@ $(document).ready(function(){
 
 <div id="pagebar">
   <div class="pagelink" id="tabrecent"><a href="/">most recent</a></div>
-  <div class="pagelink" id="tabtop"><a href="/top">top recent</a></div>
-  <div class="pagelink" id="tabtwtr"><a href="/toptwtr">top hype</a></div>
-  <div class="pagelink" id="tabdiscussions"><a href="/discussions">recent discussions</a></div>
-  <div class="pagelink" id="tabrec"><a href="/recommend">recommended</a></div>
-  <div class="pagelink" id="tablib"><a href="/library">library</a></div>
+  <div class="pagelink" id="tablib"><a href="/library">library</a></div><br/>
+  <!-- <div class="pagelink" id="tabtop"><a href="/top">top recent</a></div>-->
+  <!-- <div class="pagelink" id="tabtwtr"><a href="/toptwtr">top hype</a></div>-->
+  <!-- <div class="pagelink" id="tabdiscussions"><a href="/discussions">recent discussions</a></div> -->
+  <div class="pagelink" id="tabrec_svm"><a href="/recommend_svm">recommended_svm</a></div>
+  <div class="pagelink" id="tabrec_sim"><a href="/recommend_sim">recommended_sim</a></div>
+  <div class="pagelink" id="tabrec_sim_diverse"><a href="/recommend_sim_diverse">recommended_sim_diverse</a></div>
+  <div class="pagelink" id="tabrec_cf"><a href="/recommend_cf">recommended_cf</a></div>
+  <div class="pagelink" id="tabrec_integration"><a href="/recommend_integration">recommended_integration</a></div>
+  <!-- <div class="pagelink" id="tablib"><a href="/library">library</a></div>-->
 </div>
 
 <!-- this div will be rendered into dynamcially at init with JS -->
