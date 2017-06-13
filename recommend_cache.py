@@ -77,8 +77,6 @@ def svm_cache(): # the svm submodel, calcaulated offline
 
     # we also need map from index in tfidf matrix to pid
     svm_score[uid] = {strip_version(meta['pids'][ix]):(s[ix] - min_value)/(max_value - min_value) for ix in list(sortix_filter[:max_index])} # crop paper recommendations to save space
-    print('svm_score', svm_score[uid].values())
-
   print('writing', Config.svm_score_path)
   safe_pickle_dump(svm_score, Config.svm_score_path)
 
@@ -113,9 +111,9 @@ def cf_cache():# the collaborative filtering submodel
     if paper_score:
       max_score = max(paper_score.values())
     for pid, score in paper_score.items():
-      paper_score[pid] = score / max_score
-    print('paper_score', paper_score)
+      paper_score[pid] = score #/ max_score
     cf_score[uid_now] = paper_score
+  print('cf_score:', cf_score)
   print('writing', Config.cf_score_path)
   safe_pickle_dump(cf_score, Config.cf_score_path)
 
@@ -129,7 +127,6 @@ def time_cache():# the submodel considering the publish time. Here I infer the t
   num_pids = len(pids_sort)
   for i in range(num_pids):
     time_score[pids_sort[i]] = (num_pids - i) / num_pids
-  print('time_score', time_score)
   print('writing', Config.time_score_path)
   safe_pickle_dump(time_score, Config.time_score_path)
   
